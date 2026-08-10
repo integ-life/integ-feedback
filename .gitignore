@@ -1,0 +1,5 @@
+.env
+server
+sdk/web/node_modules/
+sdk/web/dist/
+
