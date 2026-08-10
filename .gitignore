@@ -1,5 +1,5 @@
 .env
+.agent-machine.env
 server
 sdk/web/node_modules/
 sdk/web/dist/
-
