@@ -1,6 +1,7 @@
 [Unit]
 Description=Integ Feedback API (discuss.integ.life)
-After=network-online.target postgresql.service
+Requires=docker.service
+After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
@@ -21,4 +22,3 @@ RestrictSUIDSGID=true
 
 [Install]
 WantedBy=multi-user.target
-
