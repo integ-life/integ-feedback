@@ -33,6 +33,9 @@ func New(repo store.Repository, resolver *auth.Resolver, origins []string) *Serv
 func (s *Server) Handler() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
+	m.HandleFunc("GET /version", func(w http.ResponseWriter, _ *http.Request) {
+		write(w, 200, currentBuildVersion("integ-life/integ-feedback", "discuss.integ.life"))
+	})
 	m.HandleFunc("GET /sdk/v1/comments.js", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=300")
@@ -61,7 +64,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 			return
 		}
-		if r.URL.Path != "/healthz" && !strings.HasPrefix(r.URL.Path, "/sdk/") {
+		if r.URL.Path != "/healthz" && r.URL.Path != "/version" && !strings.HasPrefix(r.URL.Path, "/sdk/") {
 			p, err := s.repo.ProjectForKey(r.Context(), r.Header.Get("X-Project-Key"))
 			if err != nil {
 				problem(w, 401, "invalid_project_key", "A valid project key is required")
