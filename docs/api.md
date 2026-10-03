@@ -27,9 +27,9 @@
 
 ## Image reports
 
-`POST /v1/feedback` may include `image_base64` (JPEG, at most 512 KiB and 1280
+`POST /v1/feedback` may include `image_base64` or `images_base64` (up to four images) (JPEG, at most 512 KiB and 1280
 pixels per edge) and `attachment_consent: true`. Responses include `id` and
-`has_attachment`, never image bytes. `GET /v1/feedback/capabilities` requires
+`has_attachment` and `attachment_count`, never image bytes. `GET /v1/feedback/capabilities` requires
 the project key. `GET /v1/feedback/client.js` serves the public shared SDK
 without a key. See [shared image feedback](image-reports.md) for integration,
 privacy, quotas, retention and internal export.

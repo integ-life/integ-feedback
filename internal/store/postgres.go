@@ -27,7 +27,7 @@ func (p *Postgres) Close() { p.pool.Close() }
 
 // Feedback text remains in the queue; only expired private image bytes expire.
 func (p *Postgres) PruneAttachments(ctx context.Context) error {
-	_, err := p.pool.Exec(ctx, `UPDATE feedback SET attachment=NULL,attachment_consent_at=NULL WHERE attachment IS NOT NULL AND created_at<now()-interval '30 days'`)
+	_, err := p.pool.Exec(ctx, `UPDATE feedback SET attachment=NULL,extra_attachments=ARRAY[]::bytea[],attachment_consent_at=NULL WHERE (attachment IS NOT NULL OR cardinality(extra_attachments)>0) AND created_at<now()-interval '30 days'`)
 	return err
 }
 
@@ -103,7 +103,7 @@ func (p *Postgres) DeleteComment(ctx context.Context, project, id string, a Acto
 	return err
 }
 
-func (p *Postgres) CreateFeedback(ctx context.Context, project, resource, kind, body string, a Actor, attachment []byte) (Feedback, error) {
+func (p *Postgres) CreateFeedback(ctx context.Context, project, resource, kind, body string, a Actor, attachments [][]byte) (Feedback, error) {
 	f := Feedback{ID: uuid.NewString(), ProjectID: project, Resource: resource, Kind: kind, Body: body, Status: "new", Author: Author{Name: a.Name, UserID: a.UserID, Registered: a.Registered}}
 	var uid any
 	if a.Registered {
@@ -115,25 +115,34 @@ func (p *Postgres) CreateFeedback(ctx context.Context, project, resource, kind, 
 	}
 	defer tx.Rollback(ctx)
 	var consent any
-	if len(attachment) > 0 {
+	var attachment []byte
+	extra := make([][]byte, 0)
+	if len(attachments) > 0 {
+		attachment = attachments[0]
+		extra = attachments[1:]
 		// Serialize the project quota check with the insert, including concurrent uploads.
 		if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, project); err != nil {
 			return f, err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE feedback SET attachment=NULL,attachment_consent_at=NULL WHERE project_id=$1 AND attachment IS NOT NULL AND created_at<now()-interval '30 days'`, project); err != nil {
+		if _, err = tx.Exec(ctx, `UPDATE feedback SET attachment=NULL,extra_attachments=ARRAY[]::bytea[],attachment_consent_at=NULL WHERE project_id=$1 AND (attachment IS NOT NULL OR cardinality(extra_attachments)>0) AND created_at<now()-interval '30 days'`, project); err != nil {
 			return f, err
 		}
 		var used int64
-		if err = tx.QueryRow(ctx, `SELECT COALESCE(sum(octet_length(attachment)),0) FROM feedback WHERE project_id=$1`, project).Scan(&used); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT COALESCE(sum(COALESCE(octet_length(attachment),0)+COALESCE((SELECT sum(octet_length(bytes)) FROM unnest(extra_attachments) AS item(bytes)),0)),0) FROM feedback WHERE project_id=$1`, project).Scan(&used); err != nil {
 			return f, err
 		}
-		if used+int64(len(attachment)) > 256<<20 {
+		incoming := int64(0)
+		for _, image := range attachments {
+			incoming += int64(len(image))
+		}
+		if used+incoming > 256<<20 {
 			return f, ErrAttachmentQuota
 		}
 		consent = time.Now().UTC()
 		f.HasAttachment = true
+		f.AttachmentCount = len(attachments)
 	}
-	err = tx.QueryRow(ctx, `INSERT INTO feedback(id,project_id,resource,kind,body,user_id,author_name,author_email,attachment,attachment_consent_at) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),$9,$10) RETURNING created_at`, f.ID, project, resource, kind, body, uid, a.Name, a.Email, attachment, consent).Scan(&f.CreatedAt)
+	err = tx.QueryRow(ctx, `INSERT INTO feedback(id,project_id,resource,kind,body,user_id,author_name,author_email,attachment,attachment_consent_at,extra_attachments) VALUES($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),$9,$10,$11) RETURNING created_at`, f.ID, project, resource, kind, body, uid, a.Name, a.Email, attachment, consent, extra).Scan(&f.CreatedAt)
 	if err == nil {
 		err = tx.Commit(ctx)
 	}

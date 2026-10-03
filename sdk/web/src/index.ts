@@ -2,7 +2,7 @@ export type Guest = { name?: string; email?: string };
 export type Author = { name: string; user_id?: string; registered: boolean };
 export type Comment = { id: string; resource: string; parent_id?: string; body: string; author: Author; created_at: string; updated_at: string };
 export type FeedbackKind = "idea" | "issue" | "question" | "other";
-export type FeedbackReceipt = { id: string; resource: string; kind: FeedbackKind; status: string; has_attachment: boolean; created_at: string };
+export type FeedbackReceipt = { id: string; resource: string; kind: FeedbackKind; status: string; has_attachment: boolean; attachment_count: number; created_at: string };
 export type PreparedFeedbackImage = { base64: string; width: number; height: number; bytes: number };
 export type FeedbackClientOptions = { apiUrl: string; projectKey: string; getAccessToken?: () => string | undefined | Promise<string | undefined>; signal?: AbortSignal };
 
@@ -24,10 +24,14 @@ export class FeedbackClient {
   listComments(resource: string, options: { limit?: number; after?: string } = {}) { const q = new URLSearchParams({ resource }); if(options.limit)q.set("limit",String(options.limit));if(options.after)q.set("after",options.after);return this.request<{items:Comment[];next_cursor:string}>(`/v1/comments?${q}`); }
   createComment(input: { resource: string; body: string; parentId?: string; guest?: Guest }) { return this.request<Comment>("/v1/comments", { method:"POST", body:JSON.stringify({resource:input.resource,body:input.body,parent_id:input.parentId??"",guest_name:input.guest?.name??"",guest_email:input.guest?.email??""}) }); }
   deleteComment(id: string) { return this.request<void>(`/v1/comments/${encodeURIComponent(id)}`, {method:"DELETE"}); }
-  submitFeedback(input: {resource:string;kind:FeedbackKind;body:string;guest?:Guest;image?:PreparedFeedbackImage;attachmentConsent?:boolean}) {
-    if(input.image && !input.attachmentConsent) return Promise.reject(new FeedbackError(400,"attachment_consent_required","Explicit attachment consent is required"));
-    if(input.image && (input.image.bytes>524288 || input.image.width>1280 || input.image.height>1280)) return Promise.reject(new FeedbackError(400,"invalid_attachment","Image exceeds upload limits"));
-    return this.request<FeedbackReceipt>("/v1/feedback",{method:"POST",body:JSON.stringify({resource:input.resource,kind:input.kind,body:input.body,guest_name:input.guest?.name??"",guest_email:input.guest?.email??"",...(input.image?{image_base64:input.image.base64,attachment_consent:true}:{})})});
+  submitFeedback(input: {resource:string;kind:FeedbackKind;body:string;guest?:Guest;image?:PreparedFeedbackImage;images?:PreparedFeedbackImage[];attachmentConsent?:boolean}) {
+    if(input.image && input.images?.length) return Promise.reject(new FeedbackError(400,"invalid_attachment","Use image or images, not both"));
+    const images=input.images??(input.image?[input.image]:[]);
+    if(images.length>4) return Promise.reject(new FeedbackError(400,"invalid_attachment","At most four images per report are allowed"));
+    if(images.length && !input.attachmentConsent) return Promise.reject(new FeedbackError(400,"attachment_consent_required","Explicit attachment consent is required"));
+    if(images.some(image=>image.bytes>524288 || image.width>1280 || image.height>1280)) return Promise.reject(new FeedbackError(400,"invalid_attachment","Image exceeds upload limits"));
+    const attachments=images.length>1?{images_base64:images.map(image=>image.base64),attachment_consent:true}:images.length?{image_base64:images[0].base64,attachment_consent:true}:{};
+    return this.request<FeedbackReceipt>("/v1/feedback",{method:"POST",body:JSON.stringify({resource:input.resource,kind:input.kind,body:input.body,guest_name:input.guest?.name??"",guest_email:input.guest?.email??"",...attachments})});
   }
 }
 export class FeedbackError extends Error { constructor(public status:number,public code:string,message:string){super(message);this.name="FeedbackError"} }

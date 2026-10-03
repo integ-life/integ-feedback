@@ -35,15 +35,16 @@ type Author struct {
 }
 
 type Feedback struct {
-	HasAttachment bool      `json:"has_attachment"`
-	ID            string    `json:"id"`
-	ProjectID     string    `json:"project_id,omitempty"`
-	Resource      string    `json:"resource"`
-	Kind          string    `json:"kind"`
-	Body          string    `json:"body"`
-	Status        string    `json:"status"`
-	Author        Author    `json:"author"`
-	CreatedAt     time.Time `json:"created_at"`
+	AttachmentCount int       `json:"attachment_count"`
+	HasAttachment   bool      `json:"has_attachment"`
+	ID              string    `json:"id"`
+	ProjectID       string    `json:"project_id,omitempty"`
+	Resource        string    `json:"resource"`
+	Kind            string    `json:"kind"`
+	Body            string    `json:"body"`
+	Status          string    `json:"status"`
+	Author          Author    `json:"author"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type Repository interface {
@@ -51,5 +52,5 @@ type Repository interface {
 	ListComments(context.Context, string, string, int, string) ([]Comment, string, error)
 	CreateComment(context.Context, string, string, string, string, Actor) (Comment, error)
 	DeleteComment(context.Context, string, string, Actor) error
-	CreateFeedback(context.Context, string, string, string, string, Actor, []byte) (Feedback, error)
+	CreateFeedback(context.Context, string, string, string, string, Actor, [][]byte) (Feedback, error)
 }

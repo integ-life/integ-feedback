@@ -36,3 +36,21 @@ test('image preparation is local, bounded, opaque JPEG and releases the bitmap',
     assert.equal(image.base64,'anBlZw==');
   } finally { Object.assign(globalThis,previous); }
 });
+
+test('batch images require consent, preserve single clients and are bounded before requests', async () => {
+  const previous = globalThis.fetch; const calls = [];
+  globalThis.fetch = async (_, init) => { calls.push(JSON.parse(init.body)); return new Response(JSON.stringify({ id: 'batch', has_attachment: true, attachment_count: 4 }), { status: 201 }); };
+  try {
+    const client = new FeedbackClient({ apiUrl: 'https://discuss.integ.life', projectKey: 'pk_test' });
+    const image = { base64: 'YWJj', width: 3, height: 3, bytes: 3 };
+    const input = { resource: 'tool:test', kind: 'issue', body: 'synthetic', images: [image, image, image, image] };
+    await assert.rejects(client.submitFeedback(input), /consent/i);
+    await assert.rejects(client.submitFeedback({ ...input, attachmentConsent: true, images: [...input.images, image] }), /four/i);
+    await assert.rejects(client.submitFeedback({ ...input, attachmentConsent: true, image }), /both/i);
+    assert.equal(calls.length, 0);
+    const receipt = await client.submitFeedback({ ...input, attachmentConsent: true });
+    assert.equal(receipt.attachment_count, 4);
+    assert.deepEqual(calls[0].images_base64, ['YWJj', 'YWJj', 'YWJj', 'YWJj']);
+    assert.equal(calls[0].image_base64, undefined);
+  } finally { globalThis.fetch = previous; }
+});

@@ -41,3 +41,27 @@ func normalizeAttachment(encoded string, consent bool) ([]byte, error) {
 	}
 	return out.Bytes(), nil
 }
+
+func normalizeAttachments(single string, batch []string, consent bool) ([][]byte, error) {
+	if single != "" && len(batch) > 0 {
+		return nil, errors.New("Use image_base64 or images_base64, not both")
+	}
+	if single != "" {
+		batch = []string{single}
+	}
+	if len(batch) > 4 {
+		return nil, errors.New("At most four images per report are allowed")
+	}
+	images := make([][]byte, 0, len(batch))
+	for _, encoded := range batch {
+		if encoded == "" {
+			return nil, errors.New("Empty image attachment")
+		}
+		image, err := normalizeAttachment(encoded, consent)
+		if err != nil {
+			return nil, err
+		}
+		images = append(images, image)
+	}
+	return images, nil
+}

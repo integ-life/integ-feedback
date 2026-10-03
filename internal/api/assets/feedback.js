@@ -30,11 +30,17 @@ export class FeedbackClient {
     createComment(input) { return this.request("/v1/comments", { method: "POST", body: JSON.stringify({ resource: input.resource, body: input.body, parent_id: input.parentId ?? "", guest_name: input.guest?.name ?? "", guest_email: input.guest?.email ?? "" }) }); }
     deleteComment(id) { return this.request(`/v1/comments/${encodeURIComponent(id)}`, { method: "DELETE" }); }
     submitFeedback(input) {
-        if (input.image && !input.attachmentConsent)
+        if (input.image && input.images?.length)
+            return Promise.reject(new FeedbackError(400, "invalid_attachment", "Use image or images, not both"));
+        const images = input.images ?? (input.image ? [input.image] : []);
+        if (images.length > 4)
+            return Promise.reject(new FeedbackError(400, "invalid_attachment", "At most four images per report are allowed"));
+        if (images.length && !input.attachmentConsent)
             return Promise.reject(new FeedbackError(400, "attachment_consent_required", "Explicit attachment consent is required"));
-        if (input.image && (input.image.bytes > 524288 || input.image.width > 1280 || input.image.height > 1280))
+        if (images.some(image => image.bytes > 524288 || image.width > 1280 || image.height > 1280))
             return Promise.reject(new FeedbackError(400, "invalid_attachment", "Image exceeds upload limits"));
-        return this.request("/v1/feedback", { method: "POST", body: JSON.stringify({ resource: input.resource, kind: input.kind, body: input.body, guest_name: input.guest?.name ?? "", guest_email: input.guest?.email ?? "", ...(input.image ? { image_base64: input.image.base64, attachment_consent: true } : {}) }) });
+        const attachments = images.length > 1 ? { images_base64: images.map(image => image.base64), attachment_consent: true } : images.length ? { image_base64: images[0].base64, attachment_consent: true } : {};
+        return this.request("/v1/feedback", { method: "POST", body: JSON.stringify({ resource: input.resource, kind: input.kind, body: input.body, guest_name: input.guest?.name ?? "", guest_email: input.guest?.email ?? "", ...attachments }) });
     }
 }
 export class FeedbackError extends Error {

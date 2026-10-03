@@ -25,7 +25,7 @@ const receipt = await client.submitFeedback({
   resource: 'feature:camera',
   kind: 'issue',
   body: 'Describe the failure and include only diagnostics shown to the user.',
-  image,
+  images: [image], // Add up to three additional prepared photos.
   attachmentConsent: true,
 });
 // Show receipt.id to the user. Do not log image data.
@@ -35,14 +35,14 @@ The SDK source is `sdk/web` (`@integ-life/feedback`). Browser applications can
 import the public ES module above without maintaining a copied implementation.
 The `/v1/` path bypasses the legacy `/sdk/*` static CDN worker.
 
-`POST /v1/feedback` accepts optional `image_base64` and `attachment_consent`.
+`POST /v1/feedback` accepts optional `image_base64` (one image) or `images_base64` (array), and `attachment_consent`.
 `GET /v1/feedback/capabilities` requires the project key and exposes the limits.
-Responses include `id` and `has_attachment`. Text-only clients remain compatible.
+Responses include `id`, `has_attachment` and `attachment_count`. Text-only clients remain compatible.
 No report-list or image-download endpoint is public.
 
 ## Limits and privacy
 
-- One JPEG attachment per report, at most 512 KiB and 1280 pixels per edge.
+- Up to four JPEG attachments per report, at most 512 KiB and 1280 pixels per edge.
 - Preparation accepts JPEG, PNG or WebP up to 12 MiB, converts locally to JPEG,
   handles orientation, and flattens transparency on white.
 - The backend decodes and re-encodes JPEGs, removing EXIF/location metadata,
@@ -60,7 +60,8 @@ No report-list or image-download endpoint is public.
 
 `feedback-export` requires private database access, not a publishable project
 key. It lists reports or exports one report into a new directory (mode 0700)
-containing `report.json` and `image.jpg` (mode 0600). Keep exports private.
+containing `report.json`, `image.jpg` and optional `image-2.jpg` through
+`image-4.jpg` (mode 0600). Keep exports private.
 
 On production, load the protected environment without printing credentials:
 
@@ -69,7 +70,8 @@ sudo sh -c 'set -a; . /etc/integ-feedback.env; set +a; exec /usr/local/bin/integ
 sudo sh -c 'set -a; . /etc/integ-feedback.env; set +a; exec /usr/local/bin/integ-feedback-export --project tools --id REPORT_UUID --output /tmp/NEW_PRIVATE_EXPORT_DIRECTORY'
 ```
 
-Run `003_feedback_attachments.sql` once in a transaction before restarting the
+Run `003_feedback_attachments.sql` and then `004_feedback_multiple_images.sql`
+once each before restarting the
 new binary. Preserve the database and environment. Build locally and install the
 Linux server and export binaries; verify the receipt and persisted JPEG using a
 clearly labeled synthetic report.
@@ -85,3 +87,9 @@ GOOS=linux GOARCH=arm64 go build -o /tmp/integ-feedback-export ./cmd/feedback-ex
 
 `build-web-sdk.mjs` regenerates the embedded public JS from the single TypeScript
 source. Commit the embedded artifact with SDK changes.
+
+Multiple images are validated and saved atomically. Consent covers all previews;
+changing the selection requires renewed consent in the consumer UI. Rate and
+storage quotas count every image. Legacy `image` SDK calls remain supported.
+Use a version query on the module URL when adopting batch uploads so returning
+browsers do not reuse the previous single-image client.

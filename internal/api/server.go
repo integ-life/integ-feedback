@@ -55,7 +55,7 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("DELETE /v1/comments/{id}", s.deleteComment)
 	m.HandleFunc("POST /v1/feedback", s.createFeedback)
 	m.HandleFunc("GET /v1/feedback/capabilities", func(w http.ResponseWriter, _ *http.Request) {
-		write(w, 200, map[string]any{"image_attachment": true, "max_image_bytes": 524288, "max_image_edge": 1280, "image_format": "jpeg", "image_retention_days": 30})
+		write(w, 200, map[string]any{"image_attachment": true, "max_images_per_report": 4, "max_image_bytes": 524288, "max_image_edge": 1280, "image_format": "jpeg", "image_retention_days": 30})
 	})
 	m.HandleFunc("GET /sdk/v1/feedback.js", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
@@ -164,27 +164,28 @@ func (s *Server) deleteComment(w http.ResponseWriter, r *http.Request) {
 }
 
 type feedbackRequest struct {
-	Resource          string `json:"resource"`
-	Kind              string `json:"kind"`
-	Body              string `json:"body"`
-	GuestName         string `json:"guest_name"`
-	GuestEmail        string `json:"guest_email"`
-	ImageBase64       string `json:"image_base64"`
-	AttachmentConsent bool   `json:"attachment_consent"`
+	Resource          string   `json:"resource"`
+	Kind              string   `json:"kind"`
+	Body              string   `json:"body"`
+	GuestName         string   `json:"guest_name"`
+	GuestEmail        string   `json:"guest_email"`
+	ImageBase64       string   `json:"image_base64"`
+	ImagesBase64      []string `json:"images_base64"`
+	AttachmentConsent bool     `json:"attachment_consent"`
 }
 
 func (s *Server) createFeedback(w http.ResponseWriter, r *http.Request) {
 	var in feedbackRequest
-	if !decodeLimit(w, r, &in, 768<<10) || !validResource(in.Resource) || !map[string]bool{"idea": true, "issue": true, "question": true, "other": true}[in.Kind] || len(strings.TrimSpace(in.Body)) < 1 || len(in.Body) > 10000 {
+	if !decodeLimit(w, r, &in, 3<<20) || !validResource(in.Resource) || !map[string]bool{"idea": true, "issue": true, "question": true, "other": true}[in.Kind] || len(strings.TrimSpace(in.Body)) < 1 || len(in.Body) > 10000 {
 		problem(w, 400, "invalid_feedback", "resource, kind and body are required")
 		return
 	}
-	attachment, err := normalizeAttachment(in.ImageBase64, in.AttachmentConsent)
+	attachments, err := normalizeAttachments(in.ImageBase64, in.ImagesBase64, in.AttachmentConsent)
 	if err != nil {
 		problem(w, 400, "invalid_attachment", err.Error())
 		return
 	}
-	if len(attachment) > 0 && !s.allowUpload(r.Header.Get("X-Project-ID")) {
+	if len(attachments) > 0 && !s.allowUpload(r.Header.Get("X-Project-ID"), len(attachments)) {
 		problem(w, 429, "upload_rate_limit", "Too many image reports. Please retry later.")
 		return
 	}
@@ -193,7 +194,7 @@ func (s *Server) createFeedback(w http.ResponseWriter, r *http.Request) {
 		problem(w, 401, "invalid_identity", err.Error())
 		return
 	}
-	f, err := s.repo.CreateFeedback(r.Context(), r.Header.Get("X-Project-ID"), in.Resource, in.Kind, strings.TrimSpace(in.Body), a, attachment)
+	f, err := s.repo.CreateFeedback(r.Context(), r.Header.Get("X-Project-ID"), in.Resource, in.Kind, strings.TrimSpace(in.Body), a, attachments)
 	if errors.Is(err, store.ErrAttachmentQuota) {
 		problem(w, 429, "attachment_quota", "Image storage is full. Please retry later.")
 		return
@@ -227,17 +228,17 @@ func decodeLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) boo
 	return d.Decode(v) == nil
 }
 
-func (s *Server) allowUpload(project string) bool {
+func (s *Server) allowUpload(project string, count int) bool {
 	s.uploadMu.Lock()
 	defer s.uploadMu.Unlock()
 	window := s.uploads[project]
 	if time.Since(window.since) >= time.Minute {
 		window = uploadWindow{since: time.Now()}
 	}
-	if window.count >= 30 {
+	if count < 1 || count > 4 || window.count+count > 30 {
 		return false
 	}
-	window.count++
+	window.count += count
 	s.uploads[project] = window
 	return true
 }

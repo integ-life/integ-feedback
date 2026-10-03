@@ -89,14 +89,66 @@ func TestSharedSDKPublicButReportsAndImagesNotPublic(t *testing.T) {
 func TestImageReportRateLimit(t *testing.T) {
 	s := New(&fakeRepo{}, auth.New(""), nil)
 	for i := 0; i < 30; i++ {
-		if !s.allowUpload("project-1") {
+		if !s.allowUpload("project-1", 1) {
 			t.Fatal("too early")
 		}
 	}
-	if s.allowUpload("project-1") {
+	if s.allowUpload("project-1", 1) {
 		t.Fatal("project upload cap missing")
 	}
-	if !s.allowUpload("project-2") {
+	if !s.allowUpload("project-2", 1) {
 		t.Fatal("project isolation missing")
+	}
+}
+
+func TestMultipleImagesAreAtomicBoundedAndPrivate(t *testing.T) {
+	image := imageBase64(20, 10)
+	for _, tc := range []struct {
+		name    string
+		batch   []string
+		single  string
+		consent bool
+		status  int
+	}{
+		{"four", []string{image, image, image, image}, "", true, 201},
+		{"too-many", []string{image, image, image, image, image}, "", true, 400},
+		{"missing-consent", []string{image, image}, "", false, 400},
+		{"one-invalid", []string{image, "bad"}, "", true, 400},
+		{"mixed-fields", []string{image}, image, true, 400},
+		{"empty-image", []string{image, ""}, "", true, 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeRepo{}
+			h := New(repo, auth.New(""), nil).Handler()
+			payload, _ := json.Marshal(map[string]any{"resource": "test:multi", "kind": "issue", "body": "Synthetic multi-image test", "images_base64": tc.batch, "image_base64": tc.single, "attachment_consent": tc.consent})
+			req := httptest.NewRequest("POST", "/v1/feedback", bytes.NewReader(payload))
+			req.Header.Set("X-Project-Key", "pk_test")
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != tc.status {
+				t.Fatalf("status %d: %s", rr.Code, rr.Body.String())
+			}
+			if tc.status == 201 {
+				if len(repo.attachments) != 4 || !strings.Contains(rr.Body.String(), `"attachment_count":4`) || strings.Contains(rr.Body.String(), image) {
+					t.Fatal("invalid private multi-image receipt")
+				}
+				for _, stored := range repo.attachments {
+					if bytes.Contains(stored, []byte("private trailing metadata")) {
+						t.Fatal("metadata persisted")
+					}
+				}
+			} else if len(repo.attachments) > 0 {
+				t.Fatal("partially saved rejected batch")
+			}
+		})
+	}
+	s := New(&fakeRepo{}, auth.New(""), nil)
+	for i := 0; i < 7; i++ {
+		if !s.allowUpload("batch", 4) {
+			t.Fatal("early limit")
+		}
+	}
+	if s.allowUpload("batch", 4) || !s.allowUpload("batch", 2) || s.allowUpload("batch", 1) {
+		t.Fatal("batch quota must count images atomically")
 	}
 }

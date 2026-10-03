@@ -17,6 +17,7 @@ type fakeRepo struct {
 	actor         store.Actor
 	feedbackActor store.Actor
 	attachment    []byte
+	attachments   [][]byte
 }
 
 func (f *fakeRepo) ProjectForKey(_ context.Context, k string) (string, error) {
@@ -33,10 +34,13 @@ func (f *fakeRepo) CreateComment(_ context.Context, p, r, parent, body string, a
 	return store.Comment{ID: "c2", ProjectID: p, Resource: r, Body: body, Author: store.Author{Name: a.Name, Registered: a.Registered}}, nil
 }
 func (f *fakeRepo) DeleteComment(context.Context, string, string, store.Actor) error { return nil }
-func (f *fakeRepo) CreateFeedback(_ context.Context, p, r, k, b string, a store.Actor, attachment []byte) (store.Feedback, error) {
+func (f *fakeRepo) CreateFeedback(_ context.Context, p, r, k, b string, a store.Actor, attachments [][]byte) (store.Feedback, error) {
 	f.feedbackActor = a
-	f.attachment = attachment
-	return store.Feedback{ID: "f1", ProjectID: p, Resource: r, Kind: k, Body: b, HasAttachment: len(attachment) > 0}, nil
+	f.attachments = attachments
+	if len(attachments) > 0 {
+		f.attachment = attachments[0]
+	}
+	return store.Feedback{ID: "f1", ProjectID: p, Resource: r, Kind: k, Body: b, HasAttachment: len(attachments) > 0, AttachmentCount: len(attachments)}, nil
 }
 
 func TestGuestCommentKeepsEmailPrivate(t *testing.T) {
