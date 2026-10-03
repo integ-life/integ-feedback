@@ -2,22 +2,62 @@ export type Guest = { name?: string; email?: string };
 export type Author = { name: string; user_id?: string; registered: boolean };
 export type Comment = { id: string; resource: string; parent_id?: string; body: string; author: Author; created_at: string; updated_at: string };
 export type FeedbackKind = "idea" | "issue" | "question" | "other";
-export type FeedbackClientOptions = { apiUrl: string; projectKey: string; getAccessToken?: () => string | undefined | Promise<string | undefined> };
+export type FeedbackReceipt = { id: string; resource: string; kind: FeedbackKind; status: string; has_attachment: boolean; created_at: string };
+export type PreparedFeedbackImage = { base64: string; width: number; height: number; bytes: number };
+export type FeedbackClientOptions = { apiUrl: string; projectKey: string; getAccessToken?: () => string | undefined | Promise<string | undefined>; signal?: AbortSignal };
 
 export class FeedbackClient {
   constructor(private readonly options: FeedbackClientOptions) {}
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const token = await this.options.getAccessToken?.();
-    const response = await fetch(`${this.options.apiUrl.replace(/\/$/, "")}${path}`, { ...init, headers: { "Content-Type": "application/json", "X-Project-Key": this.options.projectKey, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init.headers } });
-    if (!response.ok) { const detail = await response.json().catch(() => ({})); throw new FeedbackError(response.status, detail?.error?.code ?? "request_failed", detail?.error?.message ?? response.statusText); }
-    return response.status === 204 ? undefined as T : response.json();
+    const controller=new AbortController(), external=init.signal??this.options.signal;
+    const abort=()=>controller.abort();
+    external?.addEventListener('abort',abort,{once:true});
+    if(external?.aborted) controller.abort();
+    const timer=setTimeout(abort,30000);
+    try {
+      const response = await fetch(`${this.options.apiUrl.replace(/\/$/, "")}${path}`, { ...init, signal:controller.signal, headers: { "Content-Type": "application/json", "X-Project-Key": this.options.projectKey, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...init.headers } });
+      if (!response.ok) { const detail = await response.json().catch(() => ({})); throw new FeedbackError(response.status, detail?.error?.code ?? "request_failed", detail?.error?.message ?? response.statusText); }
+      return response.status === 204 ? undefined as T : await response.json();
+    } finally { clearTimeout(timer);external?.removeEventListener('abort',abort); }
   }
   listComments(resource: string, options: { limit?: number; after?: string } = {}) { const q = new URLSearchParams({ resource }); if(options.limit)q.set("limit",String(options.limit));if(options.after)q.set("after",options.after);return this.request<{items:Comment[];next_cursor:string}>(`/v1/comments?${q}`); }
   createComment(input: { resource: string; body: string; parentId?: string; guest?: Guest }) { return this.request<Comment>("/v1/comments", { method:"POST", body:JSON.stringify({resource:input.resource,body:input.body,parent_id:input.parentId??"",guest_name:input.guest?.name??"",guest_email:input.guest?.email??""}) }); }
   deleteComment(id: string) { return this.request<void>(`/v1/comments/${encodeURIComponent(id)}`, {method:"DELETE"}); }
-  submitFeedback(input: {resource:string;kind:FeedbackKind;body:string;guest?:Guest}) { return this.request("/v1/feedback",{method:"POST",body:JSON.stringify({resource:input.resource,kind:input.kind,body:input.body,guest_name:input.guest?.name??"",guest_email:input.guest?.email??""})}); }
+  submitFeedback(input: {resource:string;kind:FeedbackKind;body:string;guest?:Guest;image?:PreparedFeedbackImage;attachmentConsent?:boolean}) {
+    if(input.image && !input.attachmentConsent) return Promise.reject(new FeedbackError(400,"attachment_consent_required","Explicit attachment consent is required"));
+    if(input.image && (input.image.bytes>524288 || input.image.width>1280 || input.image.height>1280)) return Promise.reject(new FeedbackError(400,"invalid_attachment","Image exceeds upload limits"));
+    return this.request<FeedbackReceipt>("/v1/feedback",{method:"POST",body:JSON.stringify({resource:input.resource,kind:input.kind,body:input.body,guest_name:input.guest?.name??"",guest_email:input.guest?.email??"",...(input.image?{image_base64:input.image.base64,attachment_consent:true}:{})})});
+  }
 }
 export class FeedbackError extends Error { constructor(public status:number,public code:string,message:string){super(message);this.name="FeedbackError"} }
+
+/** Local preparation only. Upload requires a separate submitFeedback call. */
+export async function prepareFeedbackImage(file: Blob): Promise<PreparedFeedbackImage> {
+  if(!['image/jpeg','image/png','image/webp'].includes(file.type) || !file.size || file.size>12*1024*1024) throw new Error('Choose a JPEG, PNG or WebP image up to 12 MiB.');
+  const bitmap=await createImageBitmap(file);
+  try {
+    if(bitmap.width*bitmap.height>50_000_000) throw new Error('Image dimensions are too large.');
+    const canvas=document.createElement('canvas');
+    const context=canvas.getContext('2d');
+    if(!context) throw new Error('Image preparation is unavailable.');
+    let blob: Blob | null=null;
+    for(const edge of [1280,960,640]) {
+      const scale=Math.min(1,edge/Math.max(bitmap.width,bitmap.height));
+      canvas.width=Math.max(1,Math.round(bitmap.width*scale)); canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+      context.fillStyle='#ffffff'; context.fillRect(0,0,canvas.width,canvas.height);
+      context.drawImage(bitmap,0,0,canvas.width,canvas.height);
+      for(const quality of [.85,.65,.45]) {
+        blob=await new Promise<Blob|null>(resolve=>canvas.toBlob(resolve,'image/jpeg',quality));
+        if(blob && blob.size<=524288) break;
+      }
+      if(blob && blob.size<=524288) break;
+    }
+    if(!blob || blob.size>524288) throw new Error('Could not prepare an image within the upload limit.');
+    const encoded=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=()=>reject(new Error('Could not read prepared image.'));reader.readAsDataURL(blob!);});
+    return {base64:encoded,width:canvas.width,height:canvas.height,bytes:blob.size};
+  } finally { bitmap.close(); }
+}
 
 export function mountFeedback(options: FeedbackClientOptions & {element:HTMLElement;resource:string;mode?:"comments"|"feedback"}) {
   const client=new FeedbackClient(options), root=options.element, mode=options.mode??"comments";

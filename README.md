@@ -58,3 +58,10 @@ mountFeedback({ ...config, element: document.querySelector("#comments")!, resour
 ## 生产部署
 
 服务默认只监听本机 `127.0.0.1:8385`，由 Caddy 在 `discuss.integ.life` 终止 TLS 并反向代理。参考配置位于 `deploy/production/`。
+
+## Shared image reports
+
+Projects can submit a private photo through the shared browser SDK and existing
+`/v1/feedback` endpoint. The service owns image preparation, consent, validation,
+private storage, bounded retention and operator export. Integ Tools is the first
+consumer. See [integration and maintenance](docs/image-reports.md).

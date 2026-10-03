@@ -24,6 +24,22 @@ func main() {
 		log.Fatal(err)
 	}
 	defer repo.Close()
+	go func() {
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		for {
+			pruneCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			if err := repo.PruneAttachments(pruneCtx); err != nil && ctx.Err() == nil {
+				log.Print("feedback attachment retention cleanup failed")
+			}
+			cancel()
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 	origins := split(os.Getenv("ALLOWED_ORIGINS"))
 	resolver := auth.New(os.Getenv("OIDC_USERINFO_URL"))
 	srv := &http.Server{Addr: env("HTTP_ADDR", ":8080"), Handler: api.New(repo, resolver, origins).Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}

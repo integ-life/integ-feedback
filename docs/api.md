@@ -24,3 +24,12 @@
 ```
 
 `resource` 是宿主站自行定义的稳定内容标识（建议 pathname 或业务实体 URN），最大 500 字符。正文最大 10,000 字符。
+
+## Image reports
+
+`POST /v1/feedback` may include `image_base64` (JPEG, at most 512 KiB and 1280
+pixels per edge) and `attachment_consent: true`. Responses include `id` and
+`has_attachment`, never image bytes. `GET /v1/feedback/capabilities` requires
+the project key. `GET /v1/feedback/client.js` serves the public shared SDK
+without a key. See [shared image feedback](image-reports.md) for integration,
+privacy, quotas, retention and internal export.

@@ -7,8 +7,9 @@ import (
 )
 
 var (
-	ErrNotFound  = errors.New("not found")
-	ErrForbidden = errors.New("forbidden")
+	ErrNotFound        = errors.New("not found")
+	ErrForbidden       = errors.New("forbidden")
+	ErrAttachmentQuota = errors.New("attachment storage quota reached")
 )
 
 type Actor struct {
@@ -34,14 +35,15 @@ type Author struct {
 }
 
 type Feedback struct {
-	ID        string    `json:"id"`
-	ProjectID string    `json:"project_id,omitempty"`
-	Resource  string    `json:"resource"`
-	Kind      string    `json:"kind"`
-	Body      string    `json:"body"`
-	Status    string    `json:"status"`
-	Author    Author    `json:"author"`
-	CreatedAt time.Time `json:"created_at"`
+	HasAttachment bool      `json:"has_attachment"`
+	ID            string    `json:"id"`
+	ProjectID     string    `json:"project_id,omitempty"`
+	Resource      string    `json:"resource"`
+	Kind          string    `json:"kind"`
+	Body          string    `json:"body"`
+	Status        string    `json:"status"`
+	Author        Author    `json:"author"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type Repository interface {
@@ -49,5 +51,5 @@ type Repository interface {
 	ListComments(context.Context, string, string, int, string) ([]Comment, string, error)
 	CreateComment(context.Context, string, string, string, string, Actor) (Comment, error)
 	DeleteComment(context.Context, string, string, Actor) error
-	CreateFeedback(context.Context, string, string, string, string, Actor) (Feedback, error)
+	CreateFeedback(context.Context, string, string, string, string, Actor, []byte) (Feedback, error)
 }
